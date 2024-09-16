@@ -1,0 +1,97 @@
+import requests
+from bs4 import BeautifulSoup
+from plyer import notification
+import time
+import logging
+import re
+import webbrowser
+
+logging.basicConfig(filename="stock_position_log.txt", 
+                    level=logging.INFO, 
+                    format='%(asctime)s - %(message)s',
+                    filemode='a')
+
+BASE_URL = "https://www.screener.in/screens/1989343/near-ath-stocks/?sort=down+from+52w+high&order=asc&limit=100&page={}"
+
+def get_all_stock_positions():
+    page_num = 1
+    all_stock_positions = {}
+
+    while True:
+        url = BASE_URL.format(page_num)
+        page = requests.get(url)
+        soup = BeautifulSoup(page.content, "html.parser")
+        
+        rows = soup.find_all("tr", {"data-row-company-id": True})
+        if page_num == 5:
+            break
+        if not rows:
+            break
+
+        for row in rows:
+            number = row.find("td", class_="text").text.strip().rstrip('.')
+            company_tag = row.find("a")
+            company_name = company_tag.text.strip()
+
+            url = company_tag['href']
+            full_url = extract_company_id(url)
+
+            company_url = "https://in.tradingview.com/chart/aeQ9eazg/?symbol={}".format(full_url)
+
+            cells = row.find_all("td")
+            down_52_high = cells[13].text.strip()
+
+            all_stock_positions[company_name] = {
+                'position': int(number),
+                "down_52_high": down_52_high,
+                "company_url": company_url
+            }
+        
+        page_num += 1
+    
+    return all_stock_positions
+
+def check_for_position_change(previous_positions, current_positions):
+    for company, details in current_positions.items():
+        if company in previous_positions:
+            old_position = previous_positions[company]['position']
+            new_position = details['position']
+            
+            if old_position > new_position and (old_position - new_position) >= 2:
+                return company, previous_positions[company], details
+    return None, None, None
+
+def extract_company_id(url):
+    match = re.search(r'/company/([^/]+)/', url)
+    if match:
+        return match.group(1)
+    return None
+
+previous_positions = get_all_stock_positions()
+
+while True:
+    current_positions = get_all_stock_positions()
+    company, old_pos, new_pos = check_for_position_change(previous_positions, current_positions)
+    
+    if company and old_pos:
+        old_position = old_pos['position']
+        new_position = new_pos['position']
+        
+        logging.info(f"{company} moved from {old_position} to {new_position}.")
+
+        notification.notify(
+            title="Stock Position Changed",
+            message=f"{company} moved from {old_position} to {new_position}.",
+            app_name="Stock Notifier",
+            timeout=10
+        )
+
+        if new_pos and "company_url" in new_pos:
+            webbrowser.open(new_pos["company_url"])
+
+        previous_positions = current_positions
+    
+    print("Previous Positions: ", previous_positions)
+    print("Current Positions: ", current_positions)
+    
+    time.sleep(10)
