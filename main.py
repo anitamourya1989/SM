@@ -9,7 +9,8 @@ from datetime import datetime
 import sqlite3
 
 # BASE_URL = "https://www.screener.in/screens/1989343/near-ath-stocks-new/?page={}"
-BASE_URL = "https://www.screener.in/screens/2254716/ath-15/?page={}"
+# BASE_URL = "https://www.screener.in/screens/2254716/ath-15/?page={}"
+BASE_URL = "https://www.screener.in/screens/2380156/sme-gem-stocks/?page={}"
 
 current_date = datetime.now().strftime('%Y-%m-%d')
 
@@ -110,6 +111,7 @@ def get_all_stock_positions():
                     app_name="Stock Notifier",
                     timeout=10
                 )
+                webbrowser.open(company_url)
                 logged_gems.add(company_name)
 
             all_stock_positions[company_name] = {

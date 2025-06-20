@@ -31,7 +31,7 @@ cursor = conn.cursor()
 # Create tables if they don't exist
 cursor.execute(f'''
     CREATE TABLE IF NOT EXISTS {TABLE_NAME}
-    (company_name TEXT PRIMARY KEY, position INTEGER, down_52_high REAL, percent_down_ATH REAL, company_url TEXT, old_position INTEGER, new_position INTEGER,
+    (company_name TEXT PRIMARY KEY, position INTEGER, down_52_high REAL, down_ATH REAL, company_url TEXT, old_position INTEGER, new_position INTEGER,
     created_at TEXT DEFAULT CURRENT_TIMESTAMP, modified_at TEXT DEFAULT CURRENT_TIMESTAMP)
 ''')
 
@@ -89,26 +89,46 @@ def get_all_stock_positions():
 
             down_52_high = float(cells[13].text.strip())
             week52_high = float(cells[12].text.strip())
-            percent_down_ATH = round(((all_time_high - current_price) / all_time_high) * 100, 2)
+            down_ATH = round(((all_time_high - current_price) / all_time_high) * 100, 2)
             percent_down_52week = round(((week52_high - current_price) / week52_high) * 100, 2)
 
             all_stock_positions[company_name] = {
                 'position': int(number),
                 "down_52_high": down_52_high,
-                "percent_down_ATH": percent_down_ATH,
-                # "percent_down_52week": percent_down_52week,
+                "down_ATH": down_ATH,
                 "company_url": company_url
             }
         
         page_num += 1
-    
+
     # Insert data into the database
-    for company, details in all_stock_positions.items():
+    for company_name, details in all_stock_positions.items():
+        # Check if the company_name already exists
         cursor.execute(f'''
-            INSERT OR REPLACE INTO {TABLE_NAME}
-            (company_name, position, down_52_high, percent_down_ATH, company_url, modified_at)
-            VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP)
-        ''', (company, details['position'], details['down_52_high'], details['percent_down_ATH'], details['company_url']))
+            SELECT COUNT(*) FROM {TABLE_NAME} WHERE company_name = ?
+        ''', (company_name,))
+        exists = cursor.fetchone()[0]
+
+        if exists:
+            # Update existing row
+            cursor.execute(f'''
+                UPDATE {TABLE_NAME}
+                SET new_position = ?,
+                    down_52_high = ?,
+                    down_ATH = ?,
+                    company_url = ?,
+                    modified_at = CURRENT_TIMESTAMP
+                WHERE company_name = ?
+            ''', (details['position'], details['down_52_high'], details['down_ATH'], details['company_url'], company_name))
+        else:
+            # Insert new row
+            cursor.execute(f'''
+                INSERT INTO {TABLE_NAME}
+                (company_name, new_position, down_52_high, down_ATH, company_url, created_at, modified_at)
+                VALUES (?, ?, ?, ?, ?, CURRENT_TIMESTAMP, CURRENT_TIMESTAMP)
+            ''', (company_name, details['position'], details['down_52_high'], details['down_ATH'], details['company_url']))
+
+    # Commit the changes
     conn.commit()
 
     # print(all_stock_positions)
@@ -120,16 +140,35 @@ def check_for_position_change(previous_positions, current_positions):
         # if company in previous_positions:
             old_position = previous_positions[company]['position']
             new_position = details['position']
-            percent_down_ATH = details['percent_down_ATH']
-            
+            down_ATH = details['down_ATH']
+
             # Update the database with the new positions
             cursor.execute(f'''
                 UPDATE {TABLE_NAME}
-                SET position = ?, down_52_high = ?, percent_down_ATH = ?, company_url = ?,
-                old_position = (SELECT position FROM {TABLE_NAME} WHERE company_name = ?),
-                new_position = ?, modified_at = CURRENT_TIMESTAMP
-                WHERE company_name = ?
-            ''', (details['position'], details['down_52_high'], details['percent_down_ATH'], details['company_url'], company, details['position'], company))
+                SET position = ?,
+                    down_52_high = ?,
+                    down_ATH = ?,
+                    company_url = ?,
+                    old_position = ?,
+                    new_position = ?,
+                    modified_at = CURRENT_TIMESTAMP
+                WHERE company_name = ? AND (
+                    position != ? OR
+                    down_52_high != ? OR
+                    down_ATH != ? OR
+                    company_url != ?
+                )
+            ''', (details['position'],
+                  details['down_52_high'],
+                  details['down_ATH'],
+                  details['company_url'],
+                  old_position,
+                  new_position,
+                  company,
+                  details['position'],
+                  details['down_52_high'],
+                  details['down_ATH'],
+                  details['company_url']))
             conn.commit()
 
             # if old_position is None and new_position < 20:
@@ -138,8 +177,8 @@ def check_for_position_change(previous_positions, current_positions):
 
             # print(old_position, new_position, company)
             # print("\n\n")
-            if old_position > new_position and (old_position - new_position) >= 2 and new_position < 20:
-                # print(old_position, new_position, company, '--------')
+            if old_position > new_position and (old_position - new_position) >= 2:# and new_position < 20
+                print(old_position, new_position, company, '--------')
                 return company, previous_positions[company], details
 
     return None, None, None
@@ -161,9 +200,9 @@ while True:
         # print('yes')
         old_position = old_pos['position']
         new_position = new_pos['position']
-        percent_down_ATH = new_pos['percent_down_ATH']
+        down_ATH = new_pos['down_ATH']
         
-        gem_logger.info(f"{company} moved from {old_position} to {new_position} - {percent_down_ATH}%")
+        gem_logger.info(f"{company} moved from {old_position} to {new_position} - {down_ATH}%")
 
         notification.notify(
             title="Gem Positions Changed",
